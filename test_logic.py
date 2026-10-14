@@ -66,31 +66,59 @@ check("stairs on right", said[:1] == ["Stairs on right"], str(said))
 said = run_guardian([det("person", 0.45)], 0.4)
 check("person under 0.5 ignored", said == [], str(said))
 
-# ---- speaker priorities (Linux: uses 'sleep' as a stand-in for the voice) ----
+# ---- speaker priorities ----
+# A fake "voice process" replaces the real one, so this test does not depend on how fast
+# Windows starts a subprocess or on whether espeak/PowerShell speech is installed.
 import io, contextlib
+import speech
+
+
+class FakeProc:
+    def __init__(self, seconds):
+        self.end = time.time() + seconds
+        self.killed = threading.Event()
+
+    def wait(self):
+        while time.time() < self.end and not self.killed.is_set():
+            time.sleep(0.01)
+
+    def poll(self):
+        return None if (time.time() < self.end and not self.killed.is_set()) else 0
+
+    def terminate(self):
+        self.killed.set()
+
+
+DURATION = {"s": 0.3}
+speech.subprocess.Popen = lambda cmd, *a, **k: FakeProc(DURATION["s"])
+
+
+def spoken(buf):
+    return [l.split("SPEAK: ")[1] for l in buf.getvalue().splitlines() if l.startswith("SPEAK: ")]
+
+
+DURATION["s"] = 0.3
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     sp = Speaker()
-    sp._cmd = lambda text: ["sleep", "0.3"]
     sp.say("a1", ANSWER)
-    time.sleep(0.05)                       # a1 is now playing
+    time.sleep(0.05)                       # a1 is now playing for 0.3 s
     sp.say("a2", ANSWER)
     sp.say("g1", GUARDIAN, max_age=2)
     sp.say("old", GUARDIAN, max_age=0.1)   # will be stale by the time it is reached
     time.sleep(1.5)
-order = [l.split("SPEAK: ")[1] for l in buf.getvalue().splitlines() if l.startswith("SPEAK: ")]
+order = spoken(buf)
 check("guardian jumps ahead of waiting answer, stale alert dropped", order == ["a1", "g1", "a2"], str(order))
 
+DURATION["s"] = 2
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     sp2 = Speaker()
-    sp2._cmd = lambda text: ["sleep", "2"]
     sp2.say("long answer", ANSWER)
     time.sleep(0.1)
-    start = time.time()
     sp2.say("danger", CRITICAL)
     time.sleep(0.6)
-order = [l.split("SPEAK: ")[1] for l in buf.getvalue().splitlines() if l.startswith("SPEAK: ")]
+order = spoken(buf)
 check("critical alert interrupts a long answer", order == ["long answer", "danger"], str(order))
 
 print()

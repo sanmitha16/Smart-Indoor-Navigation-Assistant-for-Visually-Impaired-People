@@ -6,5 +6,4 @@ __pycache__/
 .env.*
 !.env.example
 frame.jpg
-best_door_finetune.pt
 yolo11n.pt
