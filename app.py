@@ -30,9 +30,9 @@ handlers = {
 threading.Thread(target=guardian.run, args=(cam, speaker), daemon=True).start()
 speaker.say("System ready. Guardian on.", ANSWER)
 
-buttons = inputs.setup_gpio(handlers)
-if buttons:
+buttons = inputs.setup_gpio(handlers)   # on the Pi this always succeeds, even with no buttons wired
+# The keyboard always works too, so you can test without buttons. Real buttons also work at the same time.
+inputs.keyboard_loop(handlers)
+if buttons:                              # keyboard closed (q or no terminal): keep running on the buttons
     while True:
         time.sleep(1)
-else:
-    inputs.keyboard_loop(handlers)

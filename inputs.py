@@ -17,7 +17,10 @@ def setup_gpio(handlers):
 def keyboard_loop(handlers):
     keys = {"r": "read", "c": "color", "i": "item", "s": "scene", "x": "repeat", "p": "pack"}
     while True:
-        k = input("r=read c=color i=item s=scene x=repeat p=pack q=quit: ").strip().lower()
+        try:
+            k = input("r=read c=color i=item s=scene x=repeat p=pack q=quit: ").strip().lower()
+        except EOFError:                 # no terminal (for example when started automatically at boot)
+            break
         if k == "q":
             break
         if k in keys:
