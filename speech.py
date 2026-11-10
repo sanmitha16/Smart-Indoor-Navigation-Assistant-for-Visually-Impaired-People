@@ -14,10 +14,26 @@ class Speaker:
         self.now_priority = 99
         threading.Thread(target=self._worker, daemon=True).start()
 
-    def say(self, text, priority=ANSWER, max_age=None):
-        """max_age: drop the message if it waited longer than this many seconds (stale alerts)."""
+    def idle(self):
+        """True when nothing is playing and nothing is waiting."""
+        return self.q.empty() and self.now_priority == 99
+
+    def stop(self):
+        """Stop talking now and forget everything that is waiting."""
+        try:
+            while True:
+                self.q.get_nowait()
+        except queue.Empty:
+            pass
+        with self.lock:
+            if self.proc and self.proc.poll() is None:
+                self.proc.terminate()
+
+    def say(self, text, priority=ANSWER, max_age=None, done=None):
+        """max_age: drop the message if it waited longer than this many seconds (stale alerts).
+        done: optional function called when this message has finished playing."""
         self.n += 1
-        self.q.put((priority, self.n, time.time(), max_age, text))
+        self.q.put((priority, self.n, time.time(), max_age, text, done))
         if priority == CRITICAL:             # cut off lower-priority speech that is playing now
             with self.lock:
                 if self.proc and self.proc.poll() is None and self.now_priority > CRITICAL:
@@ -33,7 +49,7 @@ class Speaker:
 
     def _worker(self):
         while True:
-            priority, _, t, max_age, text = self.q.get()
+            priority, _, t, max_age, text, done = self.q.get()
             if max_age is not None and time.time() - t > max_age:
                 continue                     # stale alert, skip it
             self.now_priority = priority
@@ -45,3 +61,8 @@ class Speaker:
             except Exception as e:           # e.g. espeak-ng not installed: keep running
                 print("Speech error:", e, flush=True)
             self.now_priority = 99
+            if done:
+                try:
+                    done()
+                except Exception as e:
+                    print("Speech callback error:", e, flush=True)
