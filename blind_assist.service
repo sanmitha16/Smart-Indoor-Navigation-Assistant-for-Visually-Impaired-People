@@ -1,0 +1,15 @@
+# Starts the blind-assist app when the Pi boots (a "user" service, so sound works).
+# Install steps are in README.txt.
+[Unit]
+Description=Blind assist: reading mode and object mode
+
+[Service]
+WorkingDirectory=%h/Smart-Indoor-Navigation-Assistant-for-Visually-Impaired-People
+EnvironmentFile=%h/.gemini.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/Smart-Indoor-Navigation-Assistant-for-Visually-Impaired-People/venv/bin/python app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
