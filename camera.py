@@ -16,12 +16,17 @@ class CameraStream:
         self.frames = deque(maxlen=15)          # (timestamp, frame)
         self.lock = threading.Lock()
         self.running = True
-        if HAVE_PICAM:                          # Pi camera on the CSI ribbon
-            self.picam = Picamera2()
-            self.picam.configure(self.picam.create_video_configuration(
-                main={"size": size, "format": "RGB888"}))
-            self.picam.start()
-        else:                                   # USB webcam or laptop
+        self.use_picam = False
+        if HAVE_PICAM:                          # Pi camera on the CSI ribbon, if one is attached
+            try:
+                self.picam = Picamera2()
+                self.picam.configure(self.picam.create_video_configuration(
+                    main={"size": size, "format": "RGB888"}))
+                self.picam.start()
+                self.use_picam = True
+            except Exception as e:
+                print("No Pi ribbon camera, using USB webcam:", e)
+        if not self.use_picam:                  # USB webcam or laptop
             backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
             self.cap = cv2.VideoCapture(index, backend)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -32,7 +37,7 @@ class CameraStream:
 
     def _loop(self):
         while self.running:
-            if HAVE_PICAM:
+            if self.use_picam:
                 frame = self.picam.capture_array()   # "RGB888" arrives in BGR order, ready for OpenCV
                 ok = frame is not None
             else:
@@ -56,7 +61,7 @@ class CameraStream:
             return [f.copy() for t, f in self.frames if now - t <= seconds]
 
     def isOpened(self):
-        return True if HAVE_PICAM else self.cap.isOpened()
+        return True if self.use_picam else self.cap.isOpened()
 
 
 _stream = None
