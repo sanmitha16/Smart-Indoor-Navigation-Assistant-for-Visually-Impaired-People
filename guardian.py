@@ -16,23 +16,37 @@ from speech import CRITICAL, GUARDIAN
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.environ.get("YOLO_MODEL") or os.path.join(_HERE, "best_final.pt")
+# Second model: the pretrained COCO yolov8n, used ONLY for chair and dining table (the custom model has 5 classes).
+# On the Pi export it first (yolo export model=yolov8n.pt format=ncnn imgsz=320) and set
+#   export YOLO_FURNITURE_MODEL=yolov8n_ncnn_model
+# Turn chair and table off completely with:  export GUARDIAN_FURNITURE=0
+FURNITURE_PATH = os.environ.get("YOLO_FURNITURE_MODEL") or (
+    os.path.join(_HERE, "yolov8n.pt") if os.path.exists(os.path.join(_HERE, "yolov8n.pt")) else "yolov8n.pt")
+USE_FURNITURE = os.environ.get("GUARDIAN_FURNITURE", "1") != "0"
+FURNITURE_CLASSES = {"chair", "dining table"}
+FURNITURE_PREDICT_CONF = 0.35
+FURNITURE_EVERY = max(1, int(os.environ.get("FURNITURE_EVERY") or 2))   # run it on every Nth frame (saves CPU on the Pi)
+SAY_AS = {"dining table": "table"}                                     # what is spoken
+
 IMGSZ = int(os.environ.get("YOLO_IMGSZ") or 416)   # 640 is too heavy for a Pi 4. Set YOLO_IMGSZ=320 to match a 320 NCNN export
 
 # Per-class thresholds: strict on stairs (false positives), lenient on door (missed)
 CLASS_CONF = {
-    "door": 0.30,
+    "door": 0.20,
     "stairs": 0.75,
     "person": 0.50,
     "window": 0.40,
-    "wall": 0.60,
+    "wall": 0.30,
+    "chair": 0.40,
+    "dining table": 0.40,
 }
-ANNOUNCE = {"door", "wall", "stairs", "person", "window"}
+ANNOUNCE = {"door", "wall", "stairs", "person", "window", "chair", "dining table"}
 URGENT = {"stairs"}          # spoken at CRITICAL priority
 
 # Temporal confirmation: a class must appear in CONFIRM_K of the last WINDOW_M frames
 WINDOW_M = 6
 CONFIRM_K = 3
-CONFIRM_K_CLASS = {"stairs": 4}   # stairs interrupts everything, so it must be seen in more frames
+CONFIRM_K_CLASS = {"stairs": 4, "door": 2}   # stairs interrupts everything, so it must be seen in more frames; door is easy to miss
 
 # Stairs sanity check for a chest mounted camera
 STAIRS_MIN_BOTTOM = 0.55     # box bottom edge must be in the lower 45% of the frame
@@ -48,6 +62,11 @@ THREADS = int(os.environ.get("GUARDIAN_THREADS", "2"))   # CPU threads YOLO may 
 
 MIN_CONF = min(CLASS_CONF.values())
 
+# Debugging: export GUARDIAN_SAVE=1 and every spoken warning also saves a picture with the boxes drawn on it
+# into the alerts/ folder, so you can see WHAT the model thought was stairs. Delete the folder when done.
+SAVE_ALERTS = os.environ.get("GUARDIAN_SAVE") == "1"
+ALERT_DIR = os.path.join(_HERE, "alerts")
+
 
 def get_zone(x, width):
     r = x / width
@@ -59,6 +78,7 @@ def get_zone(x, width):
 
 
 def make_message(name, zone):
+    name = SAY_AS.get(name, name)
     return f"{name} ahead" if zone == "center" else f"{name} on your {zone}"
 
 
@@ -75,10 +95,13 @@ def passes_filters(name, conf, box, w, h):
 
 
 class Guardian:
-    def __init__(self, cam, speaker, model=None):
+    def __init__(self, cam, speaker, model=None, furniture=None):
         self.cam = cam
         self.speaker = speaker
         self.model = model
+        self.furniture = furniture               # second model for chair and table, or None
+        self._furn = []                          # its latest detections (reused on the frames it is skipped)
+        self._n = 0
         self.history = deque(maxlen=WINDOW_M)    # set of class names seen per frame
         self.state = {}
         self.last_alert = -1e9
@@ -130,11 +153,43 @@ class Guardian:
                 del self.state[name]
         return spoken
 
-    def _detect(self, frame):
-        result = self.model.predict(frame, imgsz=IMGSZ, conf=MIN_CONF, verbose=False)[0]
-        return [(self.model.names[int(b.cls[0].item())],
+    def _save_alert(self, frame, detections, spoken):
+        """Save the picture behind a warning, with every box the model found drawn on it."""
+        try:
+            import cv2
+            h, w = frame.shape[:2]
+            img = frame.copy()
+            for name, conf, (x1, y1, x2, y2) in detections:
+                passed = passes_filters(name, conf, (x1, y1, x2, y2), w, h)
+                color = (0, 200, 0) if passed else (160, 160, 160)       # green = counted, grey = filtered out
+                cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(img, f"{name} {conf:.2f}", (x1, max(14, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+            os.makedirs(ALERT_DIR, exist_ok=True)
+            label = spoken[0].replace(" ", "_")
+            cv2.imwrite(os.path.join(ALERT_DIR, f"{time.strftime('%H%M%S')}_{label}.jpg"), img)
+        except Exception as e:
+            print("could not save alert picture:", e, flush=True)
+
+    @staticmethod
+    def _run(model, frame, conf):
+        result = model.predict(frame, imgsz=IMGSZ, conf=conf, verbose=False)[0]
+        return [(model.names[int(b.cls[0].item())],
                  float(b.conf[0].item()),
                  tuple(map(int, b.xyxy[0].tolist()))) for b in result.boxes]
+
+    def _detect(self, frame):
+        detections = self._run(self.model, frame, MIN_CONF)               # the custom 5-class model
+        if self.furniture is not None:
+            try:
+                if self._n % FURNITURE_EVERY == 0:                        # only chair and table are kept
+                    self._furn = [d for d in self._run(self.furniture, frame, FURNITURE_PREDICT_CONF)
+                                  if d[0] in FURNITURE_CLASSES]
+                self._n += 1
+                detections = detections + self._furn
+            except Exception as e:                                        # never let this stop the safety warnings
+                print("Chair and table detection switched off:", e, flush=True)
+                self.furniture = None
+        return detections
 
     def _loop(self):
         failures = 0
@@ -159,7 +214,9 @@ class Guardian:
                     return
                 time.sleep(1)
                 continue
-            self.update(detections, w, h, time.time())
+            spoken = self.update(detections, w, h, time.time())
+            if SAVE_ALERTS and spoken:
+                self._save_alert(frame, detections, spoken)
             frames += 1
             if frames % 60 == 0:                 # speed report, useful for the Pi
                 print(f"Guardian: {frames / (time.time() - t0):.1f} frames per second", flush=True)
@@ -189,7 +246,16 @@ def start(cam, speaker):
         model.predict(np.zeros((480, 640, 3), dtype=np.uint8), imgsz=IMGSZ, verbose=False)   # warm-up
     except Exception as e:
         raise RuntimeError(f"the model could not run ({e})")
-    g = Guardian(cam, speaker, model)
+    furniture = None
+    if USE_FURNITURE:
+        try:
+            furniture = YOLO(FURNITURE_PATH, task="detect")
+            furniture.predict(np.zeros((480, 640, 3), dtype=np.uint8), imgsz=IMGSZ, verbose=False)   # warm-up
+            print("Chair and table detection on, model:", os.path.basename(FURNITURE_PATH), flush=True)
+        except Exception as e:
+            furniture = None
+            print(f"Chair and table detection is off ({e}). The 5 custom classes still work.", flush=True)
+    g = Guardian(cam, speaker, model, furniture)
     threading.Thread(target=g._loop, daemon=True).start()
     print("Obstacle guardian running, model:", os.path.basename(MODEL_PATH), flush=True)
     return g
