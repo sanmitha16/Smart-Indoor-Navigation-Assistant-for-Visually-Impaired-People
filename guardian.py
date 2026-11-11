@@ -16,12 +16,12 @@ from speech import CRITICAL, GUARDIAN
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.environ.get("YOLO_MODEL") or os.path.join(_HERE, "best_final.pt")
-IMGSZ = 416                  # 640 is too heavy for a Pi 4; try 320 if still slow
+IMGSZ = int(os.environ.get("YOLO_IMGSZ") or 416)   # 640 is too heavy for a Pi 4. Set YOLO_IMGSZ=320 to match a 320 NCNN export
 
 # Per-class thresholds: strict on stairs (false positives), lenient on door (missed)
 CLASS_CONF = {
     "door": 0.30,
-    "stairs": 0.65,
+    "stairs": 0.75,
     "person": 0.50,
     "window": 0.40,
     "wall": 0.60,
@@ -32,10 +32,11 @@ URGENT = {"stairs"}          # spoken at CRITICAL priority
 # Temporal confirmation: a class must appear in CONFIRM_K of the last WINDOW_M frames
 WINDOW_M = 6
 CONFIRM_K = 3
+CONFIRM_K_CLASS = {"stairs": 4}   # stairs interrupts everything, so it must be seen in more frames
 
 # Stairs sanity check for a chest mounted camera
 STAIRS_MIN_BOTTOM = 0.55     # box bottom edge must be in the lower 45% of the frame
-STAIRS_MIN_AREA = 0.04       # box must cover at least 4% of the frame
+STAIRS_MIN_AREA = 0.06       # box must cover at least 6% of the frame
 
 COOLDOWN = 5                 # seconds before a moved object is announced again
 ABSENCE_TIME = 2             # seconds of absence before an object counts as new
@@ -95,7 +96,7 @@ class Guardian:
 
         self.history.append(set(visible))
         counts = Counter(n for s in self.history for n in s)
-        confirmed = {n for n, c in counts.items() if c >= CONFIRM_K}
+        confirmed = {n for n, c in counts.items() if c >= CONFIRM_K_CLASS.get(n, CONFIRM_K)}
 
         spoken = []
         for name, d in visible.items():
