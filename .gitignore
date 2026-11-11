@@ -7,3 +7,4 @@ __pycache__/
 !.env.example
 frame.jpg
 yolo11n.pt
+vosk-model-*/

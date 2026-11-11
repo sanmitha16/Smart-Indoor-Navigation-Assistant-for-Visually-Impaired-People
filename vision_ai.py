@@ -12,12 +12,28 @@ client = genai.Client(  # still reads GEMINI_API_KEY
     )
 )
 
-def ask(image_path, prompt, max_tokens=150):
+MODEL = "gemini-3.5-flash-lite"
+
+
+def _contents(image_path, prompt):
     with open(image_path, "rb") as f:
         data = f.read()
+    return [types.Part.from_bytes(data=data, mime_type="image/jpeg"), prompt]
+
+
+def _config(max_tokens):
+    return types.GenerateContentConfig(temperature=0, max_output_tokens=max_tokens)
+
+
+def ask(image_path, prompt, max_tokens=150):
     r = client.models.generate_content(
-        model="gemini-3.5-flash-lite",
-        contents=[types.Part.from_bytes(data=data, mime_type="image/jpeg"), prompt],
-        config=types.GenerateContentConfig(temperature=0, max_output_tokens=max_tokens),
-    )
+        model=MODEL, contents=_contents(image_path, prompt), config=_config(max_tokens))
     return r.text
+
+
+def ask_stream(image_path, prompt, max_tokens=150):
+    """Like ask(), but yields the answer in pieces as Gemini writes it, so speech can start sooner."""
+    for chunk in client.models.generate_content_stream(
+            model=MODEL, contents=_contents(image_path, prompt), config=_config(max_tokens)):
+        if chunk.text:
+            yield chunk.text

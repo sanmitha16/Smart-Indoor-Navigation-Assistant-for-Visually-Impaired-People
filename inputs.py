@@ -1,6 +1,6 @@
 """How the user starts the two modes.
 
-On the Pi: two push buttons.
+On the Pi: two push buttons (optional, you can use voice only).
     left  button  (GPIO 17)  Reading mode
     right button  (GPIO 27)  Object mode
     Press  = start the mode (the action runs when the button is let go)
@@ -11,6 +11,7 @@ On the laptop (or any time you type in the terminal):
     r            Reading mode
     o            Object mode          o keys   (or: find keys)   looks for keys
     x            repeat the last answer
+    s            stop talking / stop a search
     q            quit
 
 Test the wiring on its own:  python inputs.py
@@ -51,8 +52,8 @@ def setup_gpio(handlers):
 
 
 def keyboard_loop(handlers):
-    aliases = {"read": "r", "object": "o", "find": "o", "repeat": "x", "quit": "q"}
-    print("r = read    o = object (o keys = look for keys)    x = repeat    q = quit")
+    aliases = {"read": "r", "object": "o", "find": "o", "repeat": "x", "stop": "s", "quit": "q"}
+    print("r = read    o = object (o keys = look for keys)    x = repeat    s = stop    q = quit")
     while True:
         try:
             line = input("> ").strip()
@@ -69,8 +70,11 @@ def keyboard_loop(handlers):
             handlers["object"](rest or None)
         elif cmd == "x":
             handlers["repeat"]()
+        elif cmd == "s":
+            if "stop" in handlers:
+                handlers["stop"]()
         elif cmd:
-            print("  (use r, o, x or q)")
+            print("  (use r, o, x, s or q)")
 
 
 if __name__ == "__main__":

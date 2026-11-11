@@ -1,12 +1,15 @@
-"""Top module. Two modes, both using Gemini:
+"""Top module. The complete prototype.
 
-  Reading mode  -> reads the text in front of the camera
-  Object mode   -> names the object in front of the camera and says where it is
+  Guardian      YOLO watches the camera all the time and warns by itself (door, stairs, person, window, wall)
+  Reading mode  -> reads the text in front of the camera            (Gemini)
+  Object mode   -> names the object in front of the camera and says where it is   (Gemini)
+                   "find keys" keeps searching while the user turns
 
-Start:   python app.py            (type r, o, x, q   or use the two buttons on the Pi)
+Hands-free: say "activate read mode", "activate object mode", "find keys", "repeat" or "stop".
+Keyboard (for testing): r, o, o keys, x, s, q.   Buttons on the Pi still work if they are wired.
+
+Start:   python app.py            (guardian + voice + keyboard)
          python app.py --view     (also opens a live camera window, for testing)
-
-The YOLO guardian is parked in the yolo_later folder until it is ready to be integrated.
 """
 import sys, threading, time
 import ask, inputs
@@ -19,21 +22,52 @@ cam = warm_up()
 
 def mode_handler(mode):
     def handler(target=None):
-        if not speaker.idle():           # pressing while it is talking just stops the talking
+        if not speaker.idle():           # asking while it is talking just stops the talking
             speaker.stop()
             return
-        threading.Thread(target=ask.run_mode, args=(mode, speaker, target), daemon=True).start()
+        if mode == "object" and target:  # "find keys": keep searching while the user turns
+            threading.Thread(target=ask.run_search, args=(target, speaker), daemon=True).start()
+        else:
+            threading.Thread(target=ask.run_mode, args=(mode, speaker, target), daemon=True).start()
     return handler
+
+
+def stop_all():
+    ask.cancel.set()                     # ends a running search or a pending answer
+    speaker.stop()                       # urgent safety warnings are not cut off
 
 
 handlers = {
     "read": mode_handler("read"),
     "object": mode_handler("object"),
     "repeat": lambda: speaker.say(ask.state["last"] or "Nothing to repeat", ANSWER),
+    "stop": stop_all,
 }
 
-speaker.say("Ready. Left button reads. Right button finds objects.", ANSWER)
-buttons = inputs.setup_gpio(handlers)    # on the Pi this works even with no buttons wired yet
+voice_on = False
+try:
+    import voice
+    voice.start(handlers, speaker)
+    voice_on = True
+except Exception as e:                   # no microphone, no model, packages missing...
+    print("Voice commands are off:", e)
+
+guardian_on = False
+try:
+    import guardian
+    guardian.start(cam, speaker)
+    guardian_on = True
+except Exception as e:                   # no model file, ultralytics missing...
+    print("Obstacle warnings are off:", e)
+
+buttons = inputs.setup_gpio(handlers)    # optional: works with no buttons wired
+
+if voice_on:
+    speaker.say("Ready. Say activate read mode, or activate object mode.", ANSWER)
+else:
+    speaker.say("Voice commands are not available.", ANSWER)
+if not guardian_on:
+    speaker.say("Obstacle warnings are not available.", ANSWER)
 
 if "--view" in sys.argv:
     import viewer
@@ -41,6 +75,6 @@ if "--view" in sys.argv:
     viewer.run(cam)                      # blocks until you press q in the window
 else:
     inputs.keyboard_loop(handlers)       # returns on q, or at once when there is no terminal
-    if buttons:                          # started automatically at boot: keep running on the buttons
-        while True:
+    if (voice_on or guardian_on or buttons) and not sys.stdin.isatty():
+        while True:                      # started at boot with no terminal: keep running
             time.sleep(1)

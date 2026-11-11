@@ -8,6 +8,8 @@ try:
 except Exception:
     HAVE_PICAM = False
 
+JPEG_QUALITY = 80       # smaller upload to Gemini, same readability (OpenCV's default is 95)
+
 
 class CameraStream:
     """Reads the camera continuously in a background thread so frames are never stale."""
@@ -92,7 +94,7 @@ def capture_best(path="frame.jpg", width=1024, window=0.5):
     score = sharpness(best)
     h, w = best.shape[:2]
     best = cv2.resize(best, (width, int(h * width / w)))
-    cv2.imwrite(path, best)
+    cv2.imwrite(path, best, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
     return path, score
 
 
