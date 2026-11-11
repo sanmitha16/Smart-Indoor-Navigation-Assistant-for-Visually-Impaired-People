@@ -9,6 +9,13 @@ CRITICAL, GUARDIAN, ANSWER = 0, 1, 2     # lower number = higher priority
 AUDIO_DEVICE = os.environ.get("AUDIO_DEVICE")
 _LINUX = platform.system() == "Linux"
 
+# How loud the Pi's voice is, 0 to 200 (espeak-ng's own default is 100). Loud for demos with a room full of people.
+# If a small speaker crackles at 200, lower it:   export SPEECH_AMPLITUDE=150
+try:
+    AMPLITUDE = str(max(0, min(200, int(os.environ.get("SPEECH_AMPLITUDE") or 200))))
+except ValueError:
+    AMPLITUDE = "200"
+
 
 class Speaker:
     """One voice for the whole program. Everything that wants to talk goes through say()."""
@@ -73,8 +80,8 @@ class Speaker:
             if text.startswith("-"):             # never let the text look like an option
                 text = " " + text
             if AUDIO_DEVICE:                     # send the voice to a chosen output
-                return ["sh", "-c", 'espeak-ng -s 150 --stdout "$1" | aplay -q -D "$2"', "sh", text, AUDIO_DEVICE]
-            return ["espeak-ng", "-s", "150", text]
+                return ["sh", "-c", 'espeak-ng -a "$3" -s 150 --stdout "$1" | aplay -q -D "$2"', "sh", text, AUDIO_DEVICE, AMPLITUDE]
+            return ["espeak-ng", "-a", AMPLITUDE, "-s", "150", text]
         safe = text.replace("'", "")
         return ["powershell", "-NoProfile", "-Command",
                 "Add-Type -AssemblyName System.Speech; "
