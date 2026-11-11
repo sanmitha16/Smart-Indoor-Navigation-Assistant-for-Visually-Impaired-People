@@ -9,7 +9,8 @@ Hands-free: say "activate read mode", "activate object mode", "find keys", "repe
 Keyboard (for testing): r, o, o keys, x, s, q.   Buttons on the Pi still work if they are wired.
 
 Start:   python app.py            (guardian + voice + keyboard)
-         python app.py --view     (also opens a live camera window, for testing)
+         python app.py --view     (also opens a live camera window, needs a screen)
+         python app.py --web      (live camera view in a web browser, works over SSH: see webview.py)
 """
 import sys, threading, time
 import ask, inputs
@@ -61,6 +62,13 @@ except Exception as e:                   # no model file, ultralytics missing...
     print("Obstacle warnings are off:", e)
 
 buttons = inputs.setup_gpio(handlers)    # optional: works with no buttons wired
+
+if "--web" in sys.argv:                  # live view in a browser, safe to start with no screen
+    try:
+        import webview
+        webview.start(cam)
+    except Exception as e:
+        print("Web view is off:", e)
 
 if voice_on:
     speaker.say("Ready. Say activate read mode, or activate object mode.", ANSWER)

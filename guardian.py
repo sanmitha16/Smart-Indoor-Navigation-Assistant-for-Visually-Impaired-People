@@ -67,6 +67,8 @@ MIN_CONF = min(CLASS_CONF.values())
 SAVE_ALERTS = os.environ.get("GUARDIAN_SAVE") == "1"
 ALERT_DIR = os.path.join(_HERE, "alerts")
 
+latest = {"dets": [], "time": 0.0}      # the newest detections, read by webview.py to draw the live view
+
 
 def get_zone(x, width):
     r = x / width
@@ -214,6 +216,7 @@ class Guardian:
                     return
                 time.sleep(1)
                 continue
+            latest["dets"], latest["time"] = detections, time.time()
             spoken = self.update(detections, w, h, time.time())
             if SAVE_ALERTS and spoken:
                 self._save_alert(frame, detections, spoken)
